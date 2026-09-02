@@ -1,6 +1,6 @@
 # TinyBorg
 
-A miniature version of Google's internal cluster scheduler (Borg), built to understand how large-scale infrastructure orchestration actually works under the hood.
+A miniature version of Google's internal cluster scheduler (Borg).
 
 ## What it does
 
