@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package tinyborg;
+
+service Master {
+  rpc RegisterWorker(WorkerInfo) returns (RegisterAck);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatAck);
+  rpc SubmitJob(JobSpec) returns (JobAck);
+  rpc GetJobStatus(JobId) returns (JobStatus);
+}
+
+service Worker {
+  rpc StartJob(JobAssignment) returns (JobAck);
+  rpc KillJob(JobId) returns (JobAck);
+  rpc GetJobStatus(JobId) returns (JobStatus);
+}
+
+message WorkerInfo {
+  string worker_id = 1;
+  int32 cpu_cores = 2;
+  int64 mem_mb = 3;
+  string address = 4;
+}
+
+message RegisterAck {
+  bool success = 1;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  int32 cpu_available = 2;
+  int64 mem_available_mb = 3;
+}
+
+message HeartbeatAck {
+  bool acknowledged = 1;
+}
+
+message JobSpec {
+  string job_id = 1;
+  string binary_path = 2;
+  repeated string args = 3;
+  int32 cpu_request = 4;
+  int64 mem_request_mb = 5;
+  int32 priority = 6;
+}
+
+message JobAssignment {
+  JobSpec spec = 1;
+}
+
+message JobAck {
+  bool success = 1;
+  string message = 2;
+}
+
+message JobId {
+  string job_id = 1;
+}
+
+enum JobPhase {
+  UNKNOWN = 0;
+  PENDING = 1;
+  RUNNING = 2;
+  FAILED = 3;
+  COMPLETED = 4;
+}
+
+message JobStatus {
+  string job_id = 1;
+  JobPhase phase = 2;
+  string worker_id = 3;
+  int32 pid = 4;
+}
