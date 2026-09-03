@@ -41,31 +41,41 @@ void SchedulingLoop(ClusterState* state) {
     }
 
     // ---- Scheduling: assign PENDING jobs to workers with capacity ----
+
     for (const JobRecord& job : state->PendingJobs()) {
-      auto worker_id = scheduler.PickWorker(job, *state);
-      if (!worker_id.has_value()) {
-        continue;
-      }
+          auto decision = scheduler.PickWorker(job, *state);
+          if (!decision.has_value()) {
+            continue;
+          }
 
-      WorkerRecord worker;
-      if (!state->GetWorker(*worker_id, &worker)) {
-        continue;
-      }
+          WorkerRecord worker;
+          if (!state->GetWorker(decision->worker_id, &worker)) {
+            continue;
+          }
 
-      if (clients.find(*worker_id) == clients.end()) {
-        clients[*worker_id] = std::make_unique<WorkerClient>(worker.address);
-      }
+          if (clients.find(decision->worker_id) == clients.end()) {
+            clients[decision->worker_id] = std::make_unique<WorkerClient>(worker.address);
+          }
 
-      bool dispatched = clients[*worker_id]->StartJob(job);
-      if (dispatched) {
-        state->AssignJobToWorker(job.job_id, *worker_id);
-        std::cout << "Scheduled job " << job.job_id
-                  << " -> worker " << *worker_id << "\n";
-      } else {
-        std::cerr << "Failed to dispatch job " << job.job_id
-                   << " to worker " << *worker_id << "\n";
-      }
-    }
+          // Preempt lower-priority jobs first, if any are needed
+          for (const std::string& victim_id : decision->jobs_to_preempt) {
+            std::cout << "Preempting job " << victim_id
+                      << " on worker " << decision->worker_id
+                      << " to make room for higher-priority job " << job.job_id << "\n";
+            clients[decision->worker_id]->KillJob(victim_id);
+            state->SetJobState(victim_id, JobDesiredState::PENDING);
+          }
+
+          bool dispatched = clients[decision->worker_id]->StartJob(job);
+          if (dispatched) {
+            state->AssignJobToWorker(job.job_id, decision->worker_id);
+            std::cout << "Scheduled job " << job.job_id
+                      << " -> worker " << decision->worker_id << "\n";
+          } else {
+            std::cerr << "Failed to dispatch job " << job.job_id
+                       << " to worker " << decision->worker_id << "\n";
+          }
+        }
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }

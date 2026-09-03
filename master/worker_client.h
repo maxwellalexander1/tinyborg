@@ -5,14 +5,15 @@
 
 namespace tinyborg {
 
-class WorkerClient {
- public:
-  explicit WorkerClient(const std::string& worker_address);
+    class WorkerClient {
+     public:
+      explicit WorkerClient(const std::string& worker_address);
 
-  bool StartJob(const JobRecord& job);
+      bool StartJob(const JobRecord& job);
+      bool KillJob(const std::string& job_id);
 
- private:
-  std::unique_ptr<Worker::Stub> stub_;
-};
+     private:
+      std::unique_ptr<Worker::Stub> stub_;
+    };
 
 }  // namespace tinyborg

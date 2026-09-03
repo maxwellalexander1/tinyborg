@@ -29,36 +29,48 @@ int main(int argc, char** argv) {
   auto stub = tinyborg::Master::NewStub(channel);
 
   if (command == "submit") {
-    if (argc < 4) {
-      PrintUsage(argv[0]);
-      return 1;
-    }
+      if (argc < 4) {
+        PrintUsage(argv[0]);
+        return 1;
+      }
 
-    tinyborg::JobSpec request;
-    request.set_job_id(argv[2]);
-    request.set_binary_path(argv[3]);
-    for (int i = 4; i < argc; i++) {
-      request.add_args(argv[i]);
-    }
-    // Hardcoded resource request for now, could be flags later
-    request.set_cpu_request(1);
-    request.set_mem_request_mb(256);
-    request.set_priority(0);
+      tinyborg::JobSpec request;
+      request.set_job_id(argv[2]);
+      request.set_binary_path(argv[3]);
 
-    tinyborg::JobAck reply;
-    grpc::ClientContext context;
-    grpc::Status status = stub->SubmitJob(&context, request, &reply);
+      // Optional: last arg can be "--priority=N", parse it out if present
+      int32_t priority = 0;
+      std::vector<std::string> args;
+      for (int i = 4; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg.rfind("--priority=", 0) == 0) {
+          priority = std::stoi(arg.substr(11));
+        } else {
+          args.push_back(arg);
+        }
+      }
+      for (const auto& a : args) {
+        request.add_args(a);
+      }
 
-    if (!status.ok()) {
-      std::cerr << "RPC failed: " << status.error_message() << "\n";
-      return 1;
-    }
+      request.set_cpu_request(1);
+      request.set_mem_request_mb(256);
+      request.set_priority(priority);
 
-    std::cout << (reply.success() ? "OK: " : "FAILED: ") << reply.message() << "\n";
-    return reply.success() ? 0 : 1;
+      tinyborg::JobAck reply;
+      grpc::ClientContext context;
+      grpc::Status status = stub->SubmitJob(&context, request, &reply);
 
-  } else if (command == "status") {
-      if (argc < 3) {
+      if (!status.ok()) {
+        std::cerr << "RPC failed: " << status.error_message() << "\n";
+        return 1;
+      }
+
+      std::cout << (reply.success() ? "OK: " : "FAILED: ") << reply.message() << "\n";
+      return reply.success() ? 0 : 1;
+
+    } else if (command == "status") {
+  if (argc < 3) {
         PrintUsage(argv[0]);
         return 1;
       }

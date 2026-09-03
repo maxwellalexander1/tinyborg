@@ -35,4 +35,20 @@ bool WorkerClient::StartJob(const JobRecord& job) {
   return reply.success();
 }
 
+bool WorkerClient::KillJob(const std::string& job_id) {
+  JobId request;
+  request.set_job_id(job_id);
+
+  JobAck reply;
+  grpc::ClientContext context;
+  grpc::Status status = stub_->KillJob(&context, request, &reply);
+
+  if (!status.ok()) {
+    std::cerr << "KillJob RPC failed for " << job_id << ": "
+              << status.error_message() << "\n";
+    return false;
+  }
+  return reply.success();
+}
+
 }  // namespace tinyborg
