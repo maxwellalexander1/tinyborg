@@ -90,10 +90,19 @@ void ClusterState::SetJobState(const std::string& job_id,
 void ClusterState::AssignJobToWorker(const std::string& job_id,
                                       const std::string& worker_id) {
   std::lock_guard<std::mutex> lock(mutex_);
-  auto it = jobs_.find(job_id);
-  if (it != jobs_.end()) {
-    it->second.assigned_worker_id = worker_id;
-    it->second.state = JobDesiredState::SCHEDULED;
+  auto job_it = jobs_.find(job_id);
+  if (job_it == jobs_.end()) return;
+
+  job_it->second.assigned_worker_id = worker_id;
+  job_it->second.state = JobDesiredState::SCHEDULED;
+
+  // Immediately reserve capacity locally, don't wait for the next heartbeat.
+  // Without this, multiple jobs scheduled in the same tick would all see
+  // stale (too-high) available capacity and pile onto the same worker.
+  auto worker_it = workers_.find(worker_id);
+  if (worker_it != workers_.end()) {
+    worker_it->second.cpu_available -= job_it->second.cpu_request;
+    worker_it->second.mem_available_mb -= job_it->second.mem_request_mb;
   }
 }
 

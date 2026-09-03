@@ -7,14 +7,23 @@
 #include <iostream>
 #include <mutex>
 #include <cstdlib>
+#include <unordered_map>
 
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::Status;
 
+struct ResourceAllocation {
+  int32_t cpu = 0;
+  int64_t mem_mb = 0;
+};
+
 class WorkerServiceImpl final : public tinyborg::Worker::Service {
  public:
+  WorkerServiceImpl(int32_t total_cpu, int64_t total_mem_mb)
+      : total_cpu_(total_cpu), total_mem_mb_(total_mem_mb) {}
+
   Status StartJob(ServerContext* context,
                    const tinyborg::JobAssignment* request,
                    tinyborg::JobAck* reply) override {
@@ -24,6 +33,12 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
 
     std::lock_guard<std::mutex> lock(mutex_);
     bool ok = runner_.StartJob(spec.job_id(), spec.binary_path(), args);
+
+    if (ok) {
+      // Track this job's resource allocation so heartbeats report real
+      // available capacity, not a static constant.
+      allocations_[spec.job_id()] = {spec.cpu_request(), spec.mem_request_mb()};
+    }
 
     reply->set_success(ok);
     reply->set_message(ok ? "started" : "failed to start");
@@ -45,7 +60,8 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
                        const tinyborg::JobId* request,
                        tinyborg::JobStatus* reply) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    runner_.ReapExited();  // refresh state before reporting
+    runner_.ReapExited();
+    ReleaseFinishedAllocations();
 
     tinyborg::RunningJob job;
     if (!runner_.GetJob(request->job_id(), &job)) {
@@ -73,24 +89,55 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
     return Status::OK;
   }
 
-  // Called periodically from a background thread to reap exited children,
-  // independent of whether anyone's actively polling status.
+  // Called periodically to reap exited children AND free their resource
+  // allocations, so heartbeats reflect real available capacity.
   void ReapLoop() {
     while (true) {
       {
         std::lock_guard<std::mutex> lock(mutex_);
         runner_.ReapExited();
+        ReleaseFinishedAllocations();
       }
       std::this_thread::sleep_for(std::chrono::seconds(1));
     }
   }
 
+  // Returns (cpu_available, mem_available_mb) based on total capacity minus
+  // what's currently allocated to running jobs.
+  std::pair<int32_t, int64_t> GetAvailableResources() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    int32_t used_cpu = 0;
+    int64_t used_mem = 0;
+    for (const auto& [job_id, alloc] : allocations_) {
+      used_cpu += alloc.cpu;
+      used_mem += alloc.mem_mb;
+    }
+    return {total_cpu_ - used_cpu, total_mem_mb_ - used_mem};
+  }
+
  private:
+  // Must be called while holding mutex_. Frees allocations for any job
+  // that's no longer RUNNING (completed, killed, or failed to start).
+  void ReleaseFinishedAllocations() {
+    for (auto it = allocations_.begin(); it != allocations_.end();) {
+      tinyborg::RunningJob job;
+      bool still_tracked = runner_.GetJob(it->first, &job);
+
+      if (!still_tracked || job.state != tinyborg::JobState::RUNNING) {
+        it = allocations_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   tinyborg::JobRunner runner_;
   std::mutex mutex_;
+  int32_t total_cpu_;
+  int64_t total_mem_mb_;
+  std::unordered_map<std::string, ResourceAllocation> allocations_;
 };
 
-// Thin client for this worker to talk to the master (register + heartbeat).
 class MasterClient {
  public:
   explicit MasterClient(const std::string& master_address) {
@@ -123,7 +170,7 @@ class MasterClient {
 
     tinyborg::HeartbeatAck reply;
     grpc::ClientContext context;
-    stub_->Heartbeat(&context, request, &reply);  // fire and forget, ignore failures for now
+    stub_->Heartbeat(&context, request, &reply);
   }
 
  private:
@@ -133,7 +180,10 @@ class MasterClient {
 void RunServer(const std::string& worker_id,
                const std::string& my_address,
                const std::string& master_address) {
-  WorkerServiceImpl service;
+  const int32_t kCpuCores = 4;
+  const int64_t kMemMb = 8192;
+
+  WorkerServiceImpl service(kCpuCores, kMemMb);
 
   std::thread reap_thread(&WorkerServiceImpl::ReapLoop, &service);
   reap_thread.detach();
@@ -144,18 +194,14 @@ void RunServer(const std::string& worker_id,
   std::unique_ptr<Server> server(builder.BuildAndStart());
   std::cout << "Worker " << worker_id << " listening on " << my_address << "\n";
 
-  // Register with master, hardcoded fake capacity for now (4 cores, 8GB)
   MasterClient master_client(master_address);
-  const int32_t kCpuCores = 4;
-  const int64_t kMemMb = 8192;
-
   bool registered = master_client.RegisterWorker(worker_id, my_address, kCpuCores, kMemMb);
   std::cout << "Registered with master: " << (registered ? "success" : "FAILED") << "\n";
 
-  // Heartbeat loop, every 2 seconds, in a detached thread
   std::thread heartbeat_thread([&]() {
     while (true) {
-      master_client.SendHeartbeat(worker_id, kCpuCores, kMemMb);  // TODO: report real usage
+      auto [cpu_available, mem_available] = service.GetAvailableResources();
+      master_client.SendHeartbeat(worker_id, cpu_available, mem_available);
       std::this_thread::sleep_for(std::chrono::seconds(2));
     }
   });
