@@ -20,19 +20,36 @@ namespace tinyborg {
 // and dispatch StartJob to the chosen worker via gRPC.
 void SchedulingLoop(ClusterState* state) {
   Scheduler scheduler;
-  // Cache WorkerClient per worker_id so we're not reconnecting every tick.
   std::unordered_map<std::string, std::unique_ptr<WorkerClient>> clients;
 
+  const std::chrono::seconds kDeadWorkerTimeout(10);
+
   while (true) {
+    // ---- Failure detection: find workers that stopped heartbeating ----
+    std::vector<std::string> dead_workers = state->DetectDeadWorkers(kDeadWorkerTimeout);
+    for (const std::string& worker_id : dead_workers) {
+      std::cout << "Worker " << worker_id << " detected DEAD (missed heartbeats)\n";
+
+      // Reschedule all its jobs back to PENDING so the loop below picks
+      // them up and reassigns them to a live worker.
+      for (const JobRecord& job : state->JobsOnWorker(worker_id)) {
+        state->SetJobState(job.job_id, JobDesiredState::PENDING);
+        std::cout << "  Rescheduling job " << job.job_id << " (was on " << worker_id << ")\n";
+      }
+
+      clients.erase(worker_id);  // drop the stale connection
+    }
+
+    // ---- Scheduling: assign PENDING jobs to workers with capacity ----
     for (const JobRecord& job : state->PendingJobs()) {
       auto worker_id = scheduler.PickWorker(job, *state);
       if (!worker_id.has_value()) {
-        continue;  // no capacity yet, try again next tick
+        continue;
       }
 
       WorkerRecord worker;
       if (!state->GetWorker(*worker_id, &worker)) {
-        continue;  // shouldn't happen, but guard anyway
+        continue;
       }
 
       if (clients.find(*worker_id) == clients.end()) {
@@ -47,12 +64,8 @@ void SchedulingLoop(ClusterState* state) {
       } else {
         std::cerr << "Failed to dispatch job " << job.job_id
                    << " to worker " << *worker_id << "\n";
-        // stays PENDING, will retry next tick (possibly on a different worker)
       }
     }
-
-    // TODO(milestone 3): also call state->DetectDeadWorkers(...) here and
-    // reschedule jobs from dead workers back to PENDING.
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
