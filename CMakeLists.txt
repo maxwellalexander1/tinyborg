@@ -69,6 +69,7 @@ target_link_libraries(tbctl PRIVATE borg_proto)
 
 enable_testing()
 add_test(NAME kill_worker COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/kill_worker_test.sh)
+add_test(NAME mtls_negative COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/mtls_test.sh)
 
 include(FetchContent)
 FetchContent_Declare(

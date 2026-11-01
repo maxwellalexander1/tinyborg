@@ -1,5 +1,6 @@
 // master/master_service.cpp
 #include "master_service.h"
+#include "../common/tls.h"
 #include <grpcpp/grpcpp.h>
 
 namespace tinyborg {
@@ -7,6 +8,12 @@ namespace tinyborg {
 grpc::Status MasterServiceImpl::RegisterWorker(grpc::ServerContext* context,
                                                 const WorkerInfo* request,
                                                 RegisterAck* reply) {
+  if (!tls::UseInsecure()) {
+    std::string cn = tls::PeerCN(context);
+    if (!tls::CNIsWorker(cn)) {
+      return grpc::Status(grpc::PERMISSION_DENIED, "only workers may register");
+    }
+  }
   WorkerRecord w;
   w.worker_id = request->worker_id();
   w.address = request->address();
@@ -23,6 +30,12 @@ grpc::Status MasterServiceImpl::RegisterWorker(grpc::ServerContext* context,
 grpc::Status MasterServiceImpl::Heartbeat(grpc::ServerContext* context,
                                            const HeartbeatRequest* request,
                                            HeartbeatAck* reply) {
+  if (!tls::UseInsecure()) {
+    std::string cn = tls::PeerCN(context);
+    if (!tls::CNIsWorker(cn)) {
+      return grpc::Status(grpc::PERMISSION_DENIED, "only workers may heartbeat");
+    }
+  }
   state_->UpdateHeartbeat(request->worker_id(),
                            request->cpu_available(),
                            request->mem_available_mb());
@@ -33,6 +46,12 @@ grpc::Status MasterServiceImpl::Heartbeat(grpc::ServerContext* context,
 grpc::Status MasterServiceImpl::SubmitJob(grpc::ServerContext* context,
                                            const JobSpec* request,
                                            JobAck* reply) {
+  if (!tls::UseInsecure()) {
+    std::string cn = tls::PeerCN(context);
+    if (cn != "tbctl-client") {
+      return grpc::Status(grpc::PERMISSION_DENIED, "only tbctl-client may submit");
+    }
+  }
   JobRecord job;
   job.job_id = request->job_id();
   job.binary_path = request->binary_path();
@@ -52,6 +71,12 @@ grpc::Status MasterServiceImpl::SubmitJob(grpc::ServerContext* context,
 grpc::Status MasterServiceImpl::GetJobStatus(grpc::ServerContext* context,
                                               const JobId* request,
                                               JobStatus* reply) {
+  if (!tls::UseInsecure()) {
+    std::string cn = tls::PeerCN(context);
+    if (cn != "tbctl-client") {
+      return grpc::Status(grpc::PERMISSION_DENIED, "only tbctl-client may query");
+    }
+  }
   JobRecord job;
   if (!state_->GetJob(request->job_id(), &job)) {
     reply->set_job_id(request->job_id());
@@ -76,8 +101,15 @@ grpc::Status MasterServiceImpl::GetJobStatus(grpc::ServerContext* context,
   }
 
   // Proxy the actual query to the worker that's running this job
-  auto channel = grpc::CreateChannel(worker.address,
-                                      grpc::InsecureChannelCredentials());
+  std::shared_ptr<grpc::ChannelCredentials> wcreds;
+  if (tls::UseInsecure()) {
+    wcreds = grpc::InsecureChannelCredentials();
+  } else {
+    std::string ca = tls::GetEnvOr("TINYBORG_CA_CRT", "certs/ca.crt");
+    wcreds = tls::ClientCreds(ca, tls::GetEnvOr("TINYBORG_CLIENT_CRT", "certs/master.crt"),
+                              tls::GetEnvOr("TINYBORG_CLIENT_KEY", "certs/master.key"));
+  }
+  auto channel = grpc::CreateChannel(worker.address, wcreds);
   auto stub = Worker::NewStub(channel);
 
   JobId worker_request;

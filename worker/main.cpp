@@ -1,6 +1,7 @@
 #include <grpcpp/grpcpp.h>
 #include "borg.grpc.pb.h"
 #include "job_runner.h"
+#include "../common/tls.h"
 
 #include <chrono>
 #include <thread>
@@ -27,6 +28,12 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
   Status StartJob(ServerContext* context,
                    const tinyborg::JobAssignment* request,
                    tinyborg::JobAck* reply) override {
+    if (!tinyborg::tls::UseInsecure()) {
+      std::string cn = tinyborg::tls::PeerCN(context);
+      if (cn != "master") {
+        return Status(grpc::PERMISSION_DENIED, "only master may start jobs");
+      }
+    }
     const auto& spec = request->spec();
 
     std::vector<std::string> args(spec.args().begin(), spec.args().end());
@@ -48,6 +55,12 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
   Status KillJob(ServerContext* context,
                  const tinyborg::JobId* request,
                  tinyborg::JobAck* reply) override {
+    if (!tinyborg::tls::UseInsecure()) {
+      std::string cn = tinyborg::tls::PeerCN(context);
+      if (cn != "master") {
+        return Status(grpc::PERMISSION_DENIED, "only master may kill jobs");
+      }
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     bool ok = runner_.KillJob(request->job_id());
 
@@ -59,6 +72,12 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
   Status GetJobStatus(ServerContext* context,
                        const tinyborg::JobId* request,
                        tinyborg::JobStatus* reply) override {
+    if (!tinyborg::tls::UseInsecure()) {
+      std::string cn = tinyborg::tls::PeerCN(context);
+      if (cn != "master") {
+        return Status(grpc::PERMISSION_DENIED, "only master may query jobs");
+      }
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     runner_.ReapExited();
     ReleaseFinishedAllocations();
@@ -140,9 +159,20 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
 
 class MasterClient {
  public:
-  explicit MasterClient(const std::string& master_address) {
-    auto channel = grpc::CreateChannel(master_address,
-                                        grpc::InsecureChannelCredentials());
+  explicit MasterClient(const std::string& master_address,
+                        const std::string& worker_id) {
+    std::shared_ptr<grpc::ChannelCredentials> creds;
+    if (tinyborg::tls::UseInsecure()) {
+      creds = grpc::InsecureChannelCredentials();
+    } else {
+      std::string ca = tinyborg::tls::GetEnvOr("TINYBORG_CA_CRT", "certs/ca.crt");
+      std::string crt = tinyborg::tls::GetEnvOr("TINYBORG_CLIENT_CRT", "");
+      std::string key = tinyborg::tls::GetEnvOr("TINYBORG_CLIENT_KEY", "");
+      if (crt.empty()) crt = "certs/" + worker_id + ".crt";
+      if (key.empty()) key = "certs/" + worker_id + ".key";
+      creds = tinyborg::tls::ClientCreds(ca, crt, key);
+    }
+    auto channel = grpc::CreateChannel(master_address, creds);
     stub_ = tinyborg::Master::NewStub(channel);
   }
 
@@ -189,12 +219,22 @@ void RunServer(const std::string& worker_id,
   reap_thread.detach();
 
   ServerBuilder builder;
-  builder.AddListeningPort(my_address, grpc::InsecureServerCredentials());
+  if (tinyborg::tls::UseInsecure()) {
+    tinyborg::tls::WarnInsecure();
+    builder.AddListeningPort(my_address, grpc::InsecureServerCredentials());
+  } else {
+    std::string ca = tinyborg::tls::GetEnvOr("TINYBORG_CA_CRT", "certs/ca.crt");
+    std::string crt = tinyborg::tls::GetEnvOr("TINYBORG_SERVER_CRT", "");
+    std::string key = tinyborg::tls::GetEnvOr("TINYBORG_SERVER_KEY", "");
+    if (crt.empty()) crt = "certs/" + worker_id + ".crt";
+    if (key.empty()) key = "certs/" + worker_id + ".key";
+    builder.AddListeningPort(my_address, tinyborg::tls::ServerCreds(ca, crt, key));
+  }
   builder.RegisterService(&service);
   std::unique_ptr<Server> server(builder.BuildAndStart());
   std::cout << "Worker " << worker_id << " listening on " << my_address << "\n";
 
-  MasterClient master_client(master_address);
+  MasterClient master_client(master_address, worker_id);
   bool registered = master_client.RegisterWorker(worker_id, my_address, kCpuCores, kMemMb);
   std::cout << "Registered with master: " << (registered ? "success" : "FAILED") << "\n";
 
@@ -211,11 +251,22 @@ void RunServer(const std::string& worker_id,
 }
 
 int main(int argc, char** argv) {
-  if (argc != 4) {
-    std::cerr << "Usage: " << argv[0] << " <worker_id> <my_address> <master_address>\n";
-    std::cerr << "Example: " << argv[0] << " worker1 0.0.0.0:50052 localhost:50051\n";
+  std::string worker_id, my_address, master_address;
+  for (int i = 1; i < argc; i++) {
+    if (std::string(argv[i]) == "--insecure") {
+      setenv("TINYBORG_INSECURE", "1", 1);
+    } else if (worker_id.empty()) {
+      worker_id = argv[i];
+    } else if (my_address.empty()) {
+      my_address = argv[i];
+    } else if (master_address.empty()) {
+      master_address = argv[i];
+    }
+  }
+  if (master_address.empty()) {
+    std::cerr << "Usage: " << argv[0] << " <worker_id> <my_address> <master_address> [--insecure]\n";
     return 1;
   }
-  RunServer(argv[1], argv[2], argv[3]);
+  RunServer(worker_id, my_address, master_address);
   return 0;
 }

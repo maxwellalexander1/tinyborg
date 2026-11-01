@@ -2,6 +2,7 @@ build/
 *.o
 *.a
 .DS_Store
+certs/
 
 # local learning notes, only README.md stays tracked
 docs/notes/

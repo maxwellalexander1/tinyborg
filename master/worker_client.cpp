@@ -1,13 +1,25 @@
 // master/worker_client.cpp
 #include "worker_client.h"
+#include "../common/tls.h"
 #include <grpcpp/grpcpp.h>
 #include <iostream>
 
 namespace tinyborg {
 
 WorkerClient::WorkerClient(const std::string& worker_address) {
-  auto channel = grpc::CreateChannel(worker_address,
-                                      grpc::InsecureChannelCredentials());
+  std::shared_ptr<grpc::ChannelCredentials> creds;
+  if (tls::UseInsecure()) {
+    creds = grpc::InsecureChannelCredentials();
+  } else {
+    std::string ca = tls::GetEnvOr("TINYBORG_CA_CRT", "certs/ca.crt");
+    std::string crt = tls::GetEnvOr("TINYBORG_CLIENT_CRT", "certs/master.crt");
+    std::string key = tls::GetEnvOr("TINYBORG_CLIENT_KEY", "certs/master.key");
+    // Master defaults to its own cert when acting as client to workers.
+    if (tls::GetEnvOr("TINYBORG_CLIENT_CRT", "").empty()) crt = "certs/master.crt";
+    if (tls::GetEnvOr("TINYBORG_CLIENT_KEY", "").empty()) key = "certs/master.key";
+    creds = tls::ClientCreds(ca, crt, key);
+  }
+  auto channel = grpc::CreateChannel(worker_address, creds);
   stub_ = Worker::NewStub(channel);
 }
 

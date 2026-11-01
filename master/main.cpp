@@ -4,6 +4,7 @@
 #include "scheduler.h"
 #include "master_service.h"
 #include "worker_client.h"
+#include "../common/tls.h"
 
 #include <chrono>
 #include <thread>
@@ -86,7 +87,7 @@ void SchedulingLoop(ClusterState* state) {
   }
 }
 
-void RunServer() {
+void RunServer(bool insecure) {
   std::string server_address("0.0.0.0:50051");
   if (const char* env = std::getenv("TINYBORG_MASTER_ADDR")) {
     server_address = env;
@@ -98,7 +99,15 @@ void RunServer() {
   scheduling_thread.detach();
 
   ServerBuilder builder;
-  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+  if (insecure || tls::UseInsecure()) {
+    tls::WarnInsecure();
+    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+  } else {
+    std::string ca = tls::GetEnvOr("TINYBORG_CA_CRT", "certs/ca.crt");
+    std::string crt = tls::GetEnvOr("TINYBORG_SERVER_CRT", "certs/master.crt");
+    std::string key = tls::GetEnvOr("TINYBORG_SERVER_KEY", "certs/master.key");
+    builder.AddListeningPort(server_address, tls::ServerCreds(ca, crt, key));
+  }
   builder.RegisterService(&service);
 
   std::unique_ptr<Server> server(builder.BuildAndStart());
@@ -108,7 +117,11 @@ void RunServer() {
 
 }  // namespace tinyborg
 
-int main() {
-  tinyborg::RunServer();
+int main(int argc, char** argv) {
+  bool insecure = false;
+  for (int i = 1; i < argc; i++) {
+    if (std::string(argv[i]) == "--insecure") insecure = true;
+  }
+  tinyborg::RunServer(insecure);
   return 0;
 }

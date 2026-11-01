@@ -1,5 +1,6 @@
 #include <grpcpp/grpcpp.h>
 #include "borg.grpc.pb.h"
+#include "../common/tls.h"
 
 #include <iostream>
 #include <string>
@@ -22,19 +23,42 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::string command = argv[1];
+  std::string command;
   std::string master_address = "localhost:50051";
+  bool insecure = false;
+  for (int i = 1; i < argc; i++) {
+    std::string a = argv[i];
+    if (a == "--insecure") {
+      insecure = true;
+    } else if (a == "--master" && i + 1 < argc) {
+      master_address = argv[++i];
+    } else if (command.empty() && a != "submit" && a != "status") {
+      // First positional before subcommand is ignored, keep simple.
+    }
+    if ((a == "submit" || a == "status") && command.empty()) command = a;
+  }
+  if (command.empty() && argc >= 2) command = argv[1];
+  if (!insecure && tinyborg::tls::UseInsecure()) insecure = true;
   if (const char* env = std::getenv("TINYBORG_MASTER_ADDR")) {
+    // Env wins unless --master was passed explicitly is complex, keep env.
     master_address = env;
-    // Server binds 0.0.0.0, client must dial localhost.
     const std::string prefix = "0.0.0.0:";
     if (master_address.rfind(prefix, 0) == 0) {
       master_address = "localhost:" + master_address.substr(prefix.size());
     }
   }
 
-  auto channel = grpc::CreateChannel(master_address,
-                                      grpc::InsecureChannelCredentials());
+  std::shared_ptr<grpc::ChannelCredentials> creds;
+  if (insecure) {
+    std::cerr << "WARNING: running with --insecure, no TLS, dev only\n";
+    creds = grpc::InsecureChannelCredentials();
+  } else {
+    std::string ca = tinyborg::tls::GetEnvOr("TINYBORG_CA_CRT", "certs/ca.crt");
+    std::string crt = tinyborg::tls::GetEnvOr("TINYBORG_CLIENT_CRT", "certs/tbctl-client.crt");
+    std::string key = tinyborg::tls::GetEnvOr("TINYBORG_CLIENT_KEY", "certs/tbctl-client.key");
+    creds = tinyborg::tls::ClientCreds(ca, crt, key);
+  }
+  auto channel = grpc::CreateChannel(master_address, creds);
   auto stub = tinyborg::Master::NewStub(channel);
 
   if (command == "submit") {
@@ -52,6 +76,8 @@ int main(int argc, char** argv) {
       std::vector<std::string> args;
       for (int i = 4; i < argc; i++) {
         std::string arg = argv[i];
+        if (arg == "--insecure") continue;
+        if (arg == "--master") { i++; continue; }
         if (arg.rfind("--priority=", 0) == 0) {
           priority = std::stoi(arg.substr(11));
         } else {
