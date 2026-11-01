@@ -23,6 +23,20 @@ BUILD = os.path.join(ROOT, "build")
 TBCTL = os.path.join(BUILD, "tbctl")
 MASTER_ADDR = "localhost:50051"
 
+def base_env():
+    e = dict(os.environ)
+    # mTLS + signed manifests by default (T8/T9). Certs live in ROOT/certs.
+    certs = os.path.join(ROOT, "certs")
+    if os.path.exists(os.path.join(certs, "ca.crt")):
+        e.setdefault("TINYBORG_CA_CRT", os.path.join(certs, "ca.crt"))
+        e.setdefault("TINYBORG_CLIENT_CRT", os.path.join(certs, "tbctl-client.crt"))
+        e.setdefault("TINYBORG_CLIENT_KEY", os.path.join(certs, "tbctl-client.key"))
+        e.setdefault("TINYBORG_TRUSTED_PUBKEY", os.path.join(certs, "submit", "submitter.pub"))
+        e.setdefault("TINYBORG_TRUSTED_KEY_ID", "default")
+        e.setdefault("TINYBORG_SUBMIT_KEY", os.path.join(certs, "submit", "submitter.key"))
+        e.setdefault("TINYBORG_SUBMIT_KEY_ID", "default")
+    return e
+
 def grep(path, pattern, default="?"):
     try:
         with open(os.path.join(ROOT, path)) as f:
@@ -65,7 +79,7 @@ def print_model(m, n_workers=2):
 
 def tbctl(*args, timeout=15):
     t0 = time.perf_counter()
-    p = subprocess.run([TBCTL, *args], capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run([TBCTL, *args], capture_output=True, text=True, timeout=timeout, env=base_env())
     dt = time.perf_counter() - t0
     return p.returncode == 0 and "OK" in (p.stdout + p.stderr) or "phase" in (p.stdout + p.stderr), dt, (p.stdout.strip() + " " + p.stderr.strip()).strip()
 
@@ -89,12 +103,24 @@ def ensure_cluster(n_workers):
         print(f"[warn] {TBCTL} missing after build; run with --model-only for static numbers."); sys.exit(1)
     if not master_up():
         print("[cluster] starting master + workers ...")
-        procs.append(subprocess.Popen([os.path.join(BUILD, "master_server")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        env = base_env()
+        certs = os.path.join(ROOT, "certs")
+        menv = dict(env)
+        menv["TINYBORG_SERVER_CRT"] = os.path.join(certs, "master.crt")
+        menv["TINYBORG_SERVER_KEY"] = os.path.join(certs, "master.key")
+        menv["TINYBORG_CLIENT_CRT"] = os.path.join(certs, "master.crt")
+        menv["TINYBORG_CLIENT_KEY"] = os.path.join(certs, "master.key")
+        procs.append(subprocess.Popen([os.path.join(BUILD, "master_server")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=menv))
         time.sleep(1.5)
         for i in range(1, n_workers + 1):
             port = 50051 + i
-            procs.append(subprocess.Popen([os.path.join(BUILD, "worker_server"), f"worker{i}", f"0.0.0.0:{port}", MASTER_ADDR],
-                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            wenv = dict(env)
+            wenv["TINYBORG_SERVER_CRT"] = os.path.join(certs, f"worker{i}.crt")
+            wenv["TINYBORG_SERVER_KEY"] = os.path.join(certs, f"worker{i}.key")
+            wenv["TINYBORG_CLIENT_CRT"] = os.path.join(certs, f"worker{i}.crt")
+            wenv["TINYBORG_CLIENT_KEY"] = os.path.join(certs, f"worker{i}.key")
+            procs.append(subprocess.Popen([os.path.join(BUILD, "worker_server"), f"worker{i}", f"127.0.0.1:{port}", MASTER_ADDR],
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=wenv))
         time.sleep(3)
     return procs
 
