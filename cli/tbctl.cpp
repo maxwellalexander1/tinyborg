@@ -130,6 +130,7 @@ int main(int argc, char** argv) {
       if (!reply.worker_id().empty()) {
         std::cout << "worker: " << reply.worker_id() << "\n";
       }
+      std::cout << "generation: " << reply.generation() << "\n";
       return 0;
 
   } else {

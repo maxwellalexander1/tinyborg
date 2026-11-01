@@ -23,7 +23,7 @@ WorkerClient::WorkerClient(const std::string& worker_address) {
   stub_ = Worker::NewStub(channel);
 }
 
-bool WorkerClient::StartJob(const JobRecord& job) {
+bool WorkerClient::StartJob(const JobRecord& job, uint64_t generation) {
   JobAssignment request;
   JobSpec* spec = request.mutable_spec();
   spec->set_job_id(job.job_id);
@@ -34,6 +34,7 @@ bool WorkerClient::StartJob(const JobRecord& job) {
   spec->set_cpu_request(job.cpu_request);
   spec->set_mem_request_mb(job.mem_request_mb);
   spec->set_priority(job.priority);
+  request.set_generation(generation);
 
   JobAck reply;
   grpc::ClientContext context;

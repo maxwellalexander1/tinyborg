@@ -6,6 +6,7 @@
 #include <chrono>
 #include <thread>
 #include <iostream>
+#include <atomic>
 #include <mutex>
 #include <cstdlib>
 #include <unordered_map>
@@ -45,6 +46,7 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
       // Track this job's resource allocation so heartbeats report real
       // available capacity, not a static constant.
       allocations_[spec.job_id()] = {spec.cpu_request(), spec.mem_request_mb()};
+      generations_[spec.job_id()] = request->generation();
     }
 
     reply->set_success(ok);
@@ -91,6 +93,8 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
 
     reply->set_job_id(job.job_id);
     reply->set_pid(job.pid);
+    auto git = generations_.find(job.job_id);
+    reply->set_generation(git != generations_.end() ? git->second : 0);
 
     switch (job.state) {
       case tinyborg::JobState::RUNNING:
@@ -155,6 +159,24 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
   int32_t total_cpu_;
   int64_t total_mem_mb_;
   std::unordered_map<std::string, ResourceAllocation> allocations_;
+  std::unordered_map<std::string, uint64_t> generations_;
+
+ public:
+  // Lease expiry: kill all local jobs. Called by lease monitor, not RPC.
+  void KillAllLocalJobs() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [id, job] : allocations_) {
+      (void)id;
+    }
+    // Collect ids first to avoid mutating while iterating runner state.
+    std::vector<std::string> ids;
+    for (const auto& [id, a] : allocations_) ids.push_back(id);
+    for (const auto& id : ids) {
+      runner_.KillJob(id);
+    }
+    runner_.ReapExited();
+    ReleaseFinishedAllocations();
+  }
 };
 
 class MasterClient {
@@ -191,7 +213,8 @@ class MasterClient {
     return status.ok() && reply.success();
   }
 
-  void SendHeartbeat(const std::string& worker_id,
+  // Returns lease timeout from master, or 0 if heartbeat failed.
+  int SendHeartbeat(const std::string& worker_id,
                       int32_t cpu_available, int64_t mem_available_mb) {
     tinyborg::HeartbeatRequest request;
     request.set_worker_id(worker_id);
@@ -200,7 +223,9 @@ class MasterClient {
 
     tinyborg::HeartbeatAck reply;
     grpc::ClientContext context;
-    stub_->Heartbeat(&context, request, &reply);
+    grpc::Status status = stub_->Heartbeat(&context, request, &reply);
+    if (!status.ok()) return 0;
+    return reply.lease_timeout_sec();
   }
 
  private:
@@ -238,14 +263,41 @@ void RunServer(const std::string& worker_id,
   bool registered = master_client.RegisterWorker(worker_id, my_address, kCpuCores, kMemMb);
   std::cout << "Registered with master: " << (registered ? "success" : "FAILED") << "\n";
 
+  std::atomic<int64_t> last_ack_ms{std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count()};
+  std::atomic<int> lease_sec{5};
+
   std::thread heartbeat_thread([&]() {
     while (true) {
       auto [cpu_available, mem_available] = service.GetAvailableResources();
-      master_client.SendHeartbeat(worker_id, cpu_available, mem_available);
+      int lease = master_client.SendHeartbeat(worker_id, cpu_available, mem_available);
+      if (lease > 0) {
+        lease_sec.store(lease);
+        last_ack_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+      }
       std::this_thread::sleep_for(std::chrono::seconds(2));
     }
   });
   heartbeat_thread.detach();
+
+  // Lease monitor: if master stops renewing (partition), kill local jobs.
+  // Lease must be shorter than master's dead timeout so zombie stops first.
+  std::thread lease_thread([&]() {
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      int64_t age_ms = now_ms - last_ack_ms.load();
+      if (age_ms > (int64_t)lease_sec.load() * 1000) {
+        std::cout << "Lease expired (no ack for " << age_ms << "ms), killing local jobs\n";
+        service.KillAllLocalJobs();
+        // Avoid repeat-kill spam: reset clock, will fire again if still partitioned.
+        last_ack_ms.store(now_ms);
+      }
+    }
+  });
+  lease_thread.detach();
 
   server->Wait();
 }

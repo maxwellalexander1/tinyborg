@@ -34,6 +34,7 @@ message HeartbeatRequest {
 
 message HeartbeatAck {
   bool acknowledged = 1;
+  uint32 lease_timeout_sec = 2;
 }
 
 message JobSpec {
@@ -47,6 +48,7 @@ message JobSpec {
 
 message JobAssignment {
   JobSpec spec = 1;
+  uint64 generation = 2;
 }
 
 message JobAck {
@@ -71,4 +73,5 @@ message JobStatus {
   JobPhase phase = 2;
   string worker_id = 3;
   int32 pid = 4;
+  uint64 generation = 5;
 }

@@ -95,6 +95,7 @@ void ClusterState::AssignJobToWorker(const std::string& job_id,
 
   job_it->second.assigned_worker_id = worker_id;
   job_it->second.state = JobDesiredState::SCHEDULED;
+  job_it->second.generation += 1;
 
   // Immediately reserve capacity locally, don't wait for the next heartbeat.
   // Without this, multiple jobs scheduled in the same tick would all see

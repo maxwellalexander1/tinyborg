@@ -72,11 +72,15 @@ void SchedulingLoop(ClusterState* state) {
             state->SetJobState(victim_id, JobDesiredState::PENDING);
           }
 
-          bool dispatched = clients[decision->worker_id]->StartJob(job);
+          bool dispatched = clients[decision->worker_id]->StartJob(job, job.generation + 1);
           if (dispatched) {
             state->AssignJobToWorker(job.job_id, decision->worker_id);
+            JobRecord updated;
+            uint64_t gen = job.generation + 1;
+            if (state->GetJob(job.job_id, &updated)) gen = updated.generation;
             std::cout << "Scheduled job " << job.job_id
-                      << " -> worker " << decision->worker_id << "\n";
+                      << " -> worker " << decision->worker_id
+                      << " gen " << gen << "\n";
           } else {
             std::cerr << "Failed to dispatch job " << job.job_id
                        << " to worker " << decision->worker_id << "\n";

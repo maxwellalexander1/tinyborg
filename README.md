@@ -35,7 +35,7 @@ To validate this isn't just a scheduler that runs `sleep`, I distributed a real 
 
 ## Known limitations (things a real system would need)
 
-- No fencing/leases: a network-partitioned worker that's still alive could theoretically keep running a job the master has already rescheduled elsewhere (the classic distributed systems "split brain" problem)
+- Fencing + leases: every assignment carries a generation number. Workers echo it, master ignores stale generations, and workers kill local jobs when their lease (heartbeat ack) expires before the dead timeout. A partitioned worker can no longer have its late result accepted, and its copy is killed on resume. Remaining gap: exactly-once is not achieved, job side effects outside the scheduler are not rolled back, and long GC or process pauses can still cause a live worker to be fenced.
 - Fixed heartbeat timeout rather than adaptive (TCP RTO-style) detection
 - No resource enforcement (cgroups) at the OS level, jobs can exceed their declared limits
 - No backoff on preemption, a low-priority job could theoretically be repeatedly preempted under sustained high-priority load

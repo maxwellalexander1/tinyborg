@@ -159,6 +159,23 @@ TEST(ClusterState, JobsOnWorkerListsForReschedule) {
   EXPECT_EQ(jobs[0].job_id, "a");
 }
 
+TEST(ClusterState, GenerationStartsZeroIncrementsOnAssign) {
+  ClusterState state;
+  state.RegisterWorker(MakeWorker("w1", 4, 8192));
+  state.RegisterWorker(MakeWorker("w2", 4, 8192));
+  JobRecord j = MakeJob("g", 1, 256);
+  EXPECT_EQ(j.generation, 0u);
+  state.AddJob(j);
+  state.AssignJobToWorker("g", "w1");
+  JobRecord out;
+  ASSERT_TRUE(state.GetJob("g", &out));
+  EXPECT_EQ(out.generation, 1u);
+  state.SetJobState("g", JobDesiredState::PENDING);
+  state.AssignJobToWorker("g", "w2");
+  ASSERT_TRUE(state.GetJob("g", &out));
+  EXPECT_EQ(out.generation, 2u);
+}
+
 TEST(ClusterState, AssignReservesCapacityLocally) {
   ClusterState state;
   state.RegisterWorker(MakeWorker("w1", 4, 1024));

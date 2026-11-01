@@ -35,7 +35,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "starting master on $MASTER_BIND (timeout 3s, mTLS)..."
-TINYBORG_MASTER_ADDR="$MASTER_BIND" TINYBORG_DEAD_TIMEOUT_SEC=3 \
+TINYBORG_MASTER_ADDR="$MASTER_BIND" TINYBORG_DEAD_TIMEOUT_SEC=3 TINYBORG_LEASE_SEC=2 \
   TINYBORG_CA_CRT="$CA" \
   TINYBORG_SERVER_CRT="$ROOT/certs/master.crt" TINYBORG_SERVER_KEY="$ROOT/certs/master.key" \
   TINYBORG_CLIENT_CRT="$ROOT/certs/master.crt" TINYBORG_CLIENT_KEY="$ROOT/certs/master.key" \

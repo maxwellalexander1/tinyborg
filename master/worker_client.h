@@ -9,7 +9,7 @@ namespace tinyborg {
      public:
       explicit WorkerClient(const std::string& worker_address);
 
-      bool StartJob(const JobRecord& job);
+      bool StartJob(const JobRecord& job, uint64_t generation);
       bool KillJob(const std::string& job_id);
 
      private:

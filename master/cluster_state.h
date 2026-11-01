@@ -37,8 +37,9 @@ struct JobRecord {
   int64_t mem_request_mb = 0;
   int32_t priority = 0;
 
-  std::string assigned_worker_id;  // empty if not yet scheduled
+  std::string assigned_worker_id;
   JobDesiredState state = JobDesiredState::PENDING;
+  uint64_t generation = 0;
 };
 
 // Thread-safe registry of workers and jobs. This is the single source of

@@ -40,6 +40,11 @@ grpc::Status MasterServiceImpl::Heartbeat(grpc::ServerContext* context,
                            request->cpu_available(),
                            request->mem_available_mb());
   reply->set_acknowledged(true);
+  int lease_sec = 5;
+  if (const char* env = std::getenv("TINYBORG_LEASE_SEC")) {
+    try { lease_sec = std::stoi(env); } catch (...) {}
+  }
+  reply->set_lease_timeout_sec(lease_sec);
   return grpc::Status::OK;
 }
 
@@ -122,6 +127,18 @@ grpc::Status MasterServiceImpl::GetJobStatus(grpc::ServerContext* context,
     reply->set_job_id(job.job_id);
     reply->set_phase(JobPhase::UNKNOWN);
     reply->set_worker_id(job.assigned_worker_id);
+    reply->set_generation(job.generation);
+    return grpc::Status::OK;
+  }
+
+  // Fencing: ignore stale results from a partitioned worker.
+  // Worker echoes the generation it was assigned. If older than master's
+  // current generation, the job was rescheduled and this late result wins nothing.
+  if (reply->generation() != job.generation) {
+    reply->set_job_id(job.job_id);
+    reply->set_phase(JobPhase::UNKNOWN);
+    reply->set_worker_id(job.assigned_worker_id);
+    reply->set_generation(job.generation);
     return grpc::Status::OK;
   }
 
