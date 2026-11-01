@@ -33,6 +33,11 @@ To validate this isn't just a scheduler that runs `sleep`, I distributed a real 
 - **Process lifecycle management**: fork/exec-based job execution with non-blocking child reaping, correctly distinguishing normal exit, signal termination, and forced kill
 - **CLI**: submit and query job status against a running cluster
 
+## Security model
+
+- mTLS: private CA, all channels require client certs. Master allows worker CNs for Register/Heartbeat, tbctl-client for Submit/Status. Workers allow only master. See `scripts/gen_certs.sh`.
+- Signed manifests: tbctl signs (Ed25519) job + resources + expiry. Workers refuse unsigned, tampered, expired, replayed, or unknown-key jobs. Proves who submitted, not that the binary is trustworthy (no measured boot or attestation).
+
 ## Known limitations (things a real system would need)
 
 - Fencing + leases: every assignment carries a generation number. Workers echo it, master ignores stale generations, and workers kill local jobs when their lease (heartbeat ack) expires before the dead timeout. A partitioned worker can no longer have its late result accepted, and its copy is killed on resume. Remaining gap: exactly-once is not achieved, job side effects outside the scheduler are not rolled back, and long GC or process pauses can still cause a live worker to be fenced.

@@ -65,6 +65,10 @@ grpc::Status MasterServiceImpl::SubmitJob(grpc::ServerContext* context,
   job.mem_request_mb = request->mem_request_mb();
   job.priority = request->priority();
   job.state = JobDesiredState::PENDING;
+  job.submitter_key_id = request->submitter_key_id();
+  job.issued_at_unix = request->issued_at_unix();
+  job.expires_at_unix = request->expires_at_unix();
+  job.signature = request->signature();
 
   state_->AddJob(job);
 

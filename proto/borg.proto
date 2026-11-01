@@ -44,6 +44,10 @@ message JobSpec {
   int32 cpu_request = 4;
   int64 mem_request_mb = 5;
   int32 priority = 6;
+  string submitter_key_id = 7;
+  int64 issued_at_unix = 8;
+  int64 expires_at_unix = 9;
+  bytes signature = 10;
 }
 
 message JobAssignment {

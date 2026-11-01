@@ -40,6 +40,10 @@ struct JobRecord {
   std::string assigned_worker_id;
   JobDesiredState state = JobDesiredState::PENDING;
   uint64_t generation = 0;
+  std::string submitter_key_id;
+  int64_t issued_at_unix = 0;
+  int64_t expires_at_unix = 0;
+  std::string signature;
 };
 
 // Thread-safe registry of workers and jobs. This is the single source of

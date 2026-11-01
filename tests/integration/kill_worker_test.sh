@@ -21,6 +21,14 @@ else
 fi
 
 CA="$ROOT/certs/ca.crt"
+if [ ! -f "$ROOT/certs/submit/submitter.key" ]; then
+  bash "$ROOT/scripts/gen_submit_keys.sh" "$ROOT/certs/submit"
+fi
+export TINYBORG_SUBMIT_KEY="$ROOT/certs/submit/submitter.key"
+export TINYBORG_SUBMIT_KEY_ID="default"
+export TINYBORG_TRUSTED_PUBKEY="$ROOT/certs/submit/submitter.pub"
+export TINYBORG_TRUSTED_KEY_ID="default"
+
 export TINYBORG_MASTER_ADDR="$MASTER_ADDR"
 
 MASTER_PID=""

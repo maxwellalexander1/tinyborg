@@ -2,6 +2,8 @@
 #include "borg.grpc.pb.h"
 #include "job_runner.h"
 #include "../common/tls.h"
+#include "../common/manifest.h"
+#include <ctime>
 
 #include <chrono>
 #include <thread>
@@ -40,6 +42,45 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
     std::vector<std::string> args(spec.args().begin(), spec.args().end());
 
     std::lock_guard<std::mutex> lock(mutex_);
+    // Signed manifest check (T9): refuse unsigned, tampered, expired, replayed.
+    {
+      std::string trusted_pub_path = tinyborg::tls::GetEnvOr(
+          "TINYBORG_TRUSTED_PUBKEY", "certs/submit/submitter.pub");
+      std::string trusted_id = tinyborg::tls::GetEnvOr("TINYBORG_TRUSTED_KEY_ID", "default");
+      int64_t now = (int64_t)std::time(nullptr);
+      for (auto it = seen_jobs_.begin(); it != seen_jobs_.end();) {
+        if (now >= it->second) it = seen_jobs_.erase(it);
+        else ++it;
+      }
+      std::string why;
+      if (spec.signature().empty()) {
+        why = "unsigned manifest";
+      } else if (spec.submitter_key_id() != trusted_id) {
+        why = "unknown key id";
+      } else if (!(spec.issued_at_unix() <= now + 60 && now < spec.expires_at_unix() &&
+                   spec.issued_at_unix() <= spec.expires_at_unix())) {
+        why = "expired or bad timestamps";
+      } else if (seen_jobs_.count(spec.job_id())) {
+        why = "replayed job id";
+      } else {
+        std::string pub = tinyborg::tls::ReadFile(trusted_pub_path);
+        std::string msg = tinyborg::manifest::Canonical(
+            spec.job_id(), spec.binary_path(),
+            tinyborg::manifest::JoinArgs(args), spec.cpu_request(),
+            spec.mem_request_mb(), spec.priority(), spec.issued_at_unix(),
+            spec.expires_at_unix(), spec.submitter_key_id());
+        if (!tinyborg::manifest::Verify(pub, msg, spec.signature())) {
+          why = "bad signature";
+        }
+      }
+      if (!why.empty()) {
+        std::cerr << "refusing job " << spec.job_id() << ": " << why << "\n";
+        reply->set_success(false);
+        reply->set_message(std::string("refused: ") + why);
+        return Status::OK;
+      }
+      seen_jobs_[spec.job_id()] = spec.expires_at_unix();
+    }
     bool ok = runner_.StartJob(spec.job_id(), spec.binary_path(), args);
 
     if (ok) {
@@ -160,6 +201,7 @@ class WorkerServiceImpl final : public tinyborg::Worker::Service {
   int64_t total_mem_mb_;
   std::unordered_map<std::string, ResourceAllocation> allocations_;
   std::unordered_map<std::string, uint64_t> generations_;
+  std::unordered_map<std::string, int64_t> seen_jobs_;
 
  public:
   // Lease expiry: kill all local jobs. Called by lease monitor, not RPC.

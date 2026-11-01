@@ -34,6 +34,10 @@ bool WorkerClient::StartJob(const JobRecord& job, uint64_t generation) {
   spec->set_cpu_request(job.cpu_request);
   spec->set_mem_request_mb(job.mem_request_mb);
   spec->set_priority(job.priority);
+  spec->set_submitter_key_id(job.submitter_key_id);
+  spec->set_issued_at_unix(job.issued_at_unix);
+  spec->set_expires_at_unix(job.expires_at_unix);
+  spec->set_signature(job.signature);
   request.set_generation(generation);
 
   JobAck reply;

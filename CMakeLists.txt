@@ -71,6 +71,7 @@ enable_testing()
 add_test(NAME kill_worker COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/kill_worker_test.sh)
 add_test(NAME mtls_negative COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/mtls_test.sh)
 add_test(NAME fencing COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/fencing_test.sh)
+add_test(NAME manifest_negative COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/manifest_test.sh)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -96,3 +97,11 @@ add_executable(job_runner_gtest
 target_include_directories(job_runner_gtest PRIVATE worker)
 target_link_libraries(job_runner_gtest PRIVATE GTest::gtest_main)
 add_test(NAME job_runner_gtest COMMAND job_runner_gtest)
+
+find_package(OpenSSL REQUIRED)
+add_executable(manifest_test
+  tests/unit/manifest_test.cpp
+)
+target_include_directories(manifest_test PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(manifest_test PRIVATE GTest::gtest_main OpenSSL::Crypto)
+add_test(NAME manifest_test COMMAND manifest_test)
