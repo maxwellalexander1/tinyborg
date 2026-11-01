@@ -1,0 +1,16 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
+      - name: Configure
+        run: cmake -S . -B build
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build -V

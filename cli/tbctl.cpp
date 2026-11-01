@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <cstdlib>
 #include <vector>
 
 void PrintUsage(const char* prog) {
@@ -23,6 +24,14 @@ int main(int argc, char** argv) {
 
   std::string command = argv[1];
   std::string master_address = "localhost:50051";
+  if (const char* env = std::getenv("TINYBORG_MASTER_ADDR")) {
+    master_address = env;
+    // Server binds 0.0.0.0, client must dial localhost.
+    const std::string prefix = "0.0.0.0:";
+    if (master_address.rfind(prefix, 0) == 0) {
+      master_address = "localhost:" + master_address.substr(prefix.size());
+    }
+  }
 
   auto channel = grpc::CreateChannel(master_address,
                                       grpc::InsecureChannelCredentials());

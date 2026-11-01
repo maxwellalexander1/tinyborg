@@ -8,6 +8,7 @@
 #include <chrono>
 #include <thread>
 #include <iostream>
+#include <cstdlib>
 #include <unordered_map>
 #include <mutex>
 
@@ -22,7 +23,11 @@ void SchedulingLoop(ClusterState* state) {
   Scheduler scheduler;
   std::unordered_map<std::string, std::unique_ptr<WorkerClient>> clients;
 
-  const std::chrono::seconds kDeadWorkerTimeout(10);
+  int timeout_sec = 10;
+  if (const char* env = std::getenv("TINYBORG_DEAD_TIMEOUT_SEC")) {
+    try { timeout_sec = std::stoi(env); } catch (...) {}
+  }
+  const std::chrono::seconds kDeadWorkerTimeout(timeout_sec);
 
   while (true) {
     // ---- Failure detection: find workers that stopped heartbeating ----
@@ -83,6 +88,9 @@ void SchedulingLoop(ClusterState* state) {
 
 void RunServer() {
   std::string server_address("0.0.0.0:50051");
+  if (const char* env = std::getenv("TINYBORG_MASTER_ADDR")) {
+    server_address = env;
+  }
   ClusterState state;
   MasterServiceImpl service(&state);
 

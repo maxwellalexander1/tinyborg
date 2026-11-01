@@ -63,6 +63,7 @@ grpc::Status MasterServiceImpl::GetJobStatus(grpc::ServerContext* context,
     // Job exists but hasn't been scheduled to a worker yet
     reply->set_job_id(job.job_id);
     reply->set_phase(JobPhase::PENDING);
+    reply->set_worker_id("");
     return grpc::Status::OK;
   }
 
@@ -88,9 +89,12 @@ grpc::Status MasterServiceImpl::GetJobStatus(grpc::ServerContext* context,
   if (!status.ok()) {
     reply->set_job_id(job.job_id);
     reply->set_phase(JobPhase::UNKNOWN);
+    reply->set_worker_id(job.assigned_worker_id);
     return grpc::Status::OK;
   }
 
+  // Preserve which worker the master thinks owns this job.
+  reply->set_worker_id(job.assigned_worker_id);
   return grpc::Status::OK;
 }
 

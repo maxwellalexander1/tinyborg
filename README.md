@@ -1,5 +1,7 @@
 # TinyBorg
 
+![CI](https://github.com/maxwellalexander1/tinyborg/workflows/CI/badge.svg)
+
 A miniature version of Google's internal cluster scheduler (Borg), built from scratch in C++ and gRPC to understand how large-scale infrastructure orchestration actually works.
 
 ## What it does
