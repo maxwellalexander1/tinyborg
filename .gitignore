@@ -2,6 +2,7 @@ build/
 *.o
 *.a
 .DS_Store
+__pycache__/
 certs/
 
 # local learning notes, only README.md stays tracked
