@@ -55,12 +55,6 @@ add_executable(master_server
 target_include_directories(master_server PRIVATE master)
 target_link_libraries(master_server PRIVATE borg_proto)
 
-add_executable(job_runner_test
-  worker/job_runner.cpp
-  worker/job_runner_test.cpp
-)
-target_include_directories(job_runner_test PRIVATE worker)
-
 add_executable(worker_server
   worker/job_runner.cpp
   worker/main.cpp
@@ -75,3 +69,28 @@ target_link_libraries(tbctl PRIVATE borg_proto)
 
 enable_testing()
 add_test(NAME kill_worker COMMAND bash ${CMAKE_SOURCE_DIR}/tests/integration/kill_worker_test.sh)
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+)
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+add_executable(scheduler_test
+  master/cluster_state.cpp
+  master/scheduler.cpp
+  tests/unit/scheduler_test.cpp
+)
+target_include_directories(scheduler_test PRIVATE master)
+target_link_libraries(scheduler_test PRIVATE GTest::gtest_main)
+add_test(NAME scheduler_test COMMAND scheduler_test)
+
+add_executable(job_runner_gtest
+  worker/job_runner.cpp
+  tests/unit/job_runner_test.cpp
+)
+target_include_directories(job_runner_gtest PRIVATE worker)
+target_link_libraries(job_runner_gtest PRIVATE GTest::gtest_main)
+add_test(NAME job_runner_gtest COMMAND job_runner_gtest)
